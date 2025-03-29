@@ -378,3 +378,56 @@ const $reset = isOptionsStore
       }
     : noop
 ```
+---
+
+### mapState是怎麼實現的?
+
+mapState主要有兩種使用方式，根據傳入參數的不同會有不同實現:
+
+1.陣列:
+```ts
+mapState(useCounterStore, ['count'])
+```
+
+2.物件:
+```ts
+mapState(useCounterStore, {
+  myOwnName: 'count',
+  double: store => store.count * 2,
+  withThis(store) {
+    return store.count + this.double
+  }
+})
+```
+
+- 若傳入陣列，會遍歷陣列並為每個key生成一個computed property
+- 若傳入物件，會遍歷物件的key，針對不同value類型:
+   - 若是字串: 直接返回store對應的值
+   - 若是函數: 執行該函數並傳入store實例
+
+```ts
+export function mapState(useStore, keysOrMapper) {
+  return Array.isArray(keysOrMapper)
+    ? keysOrMapper.reduce((reduced, key) => {
+        // 陣列形式: 直接返回store[key]
+        reduced[key] = function() {
+          return useStore(this.$pinia)[key]
+        }
+        return reduced
+      }, {})
+    : Object.keys(keysOrMapper).reduce((reduced, key) => {
+        // 物件形式
+        reduced[key] = function() {
+          const store = useStore(this.$pinia)
+          const storeKey = keysOrMapper[key]
+          return typeof storeKey === 'function'
+            // 如果是函數則調用並傳入store
+            // this是指向store的實例
+            ? storeKey.call(this, store) 
+            // 如果是字串則直接返回store的值
+            : store[storeKey]
+        }
+        return reduced
+      }, {})
+}
+```
