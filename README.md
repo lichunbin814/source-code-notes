@@ -1,6 +1,7 @@
 # Pinia
 
 ## 核心概念
+## Store
 ### 為什麼 `defineStore` 的第一個參數需要是唯一的 Store ID？
 
 ```ts
@@ -335,4 +336,45 @@ export function storeToRefs<SS extends StoreGeneric>(store: SS) {
   // 回傳所有引用的對象
   return refs
 }
+```
+----
+
+## State
+
+### Option Store的$reset()是怎麼實現的?
+
+```ts
+const $reset = isOptionsStore
+  ? function $reset() {
+      /*
+        options是defineStore傳入的Object
+
+        defineStore('store', {
+          state: () => ({ count: 0 })
+        })
+       */
+      const { state } = options
+
+      // 會重置到初始狀態
+      const newState = state ? state() : {}
+      /*
+        使用 $patch 來更新狀態。$patch 的特別之處在於它會：
+          - 暫時停止監聽狀態變化（isListening = false）
+          - 將所有更改集中處理
+          - 最後才一次性通知所有訂閱者，避免觸發多次更新
+          - 這樣可以提升效能並保持狀態更新的一致性
+       */
+      this.$patch(($state) => {
+        assign($state, newState)
+      })
+    }
+  : /* istanbul ignore next */
+    __DEV__
+    ? () => {
+        // setup store 預設不支援 reset 功能，需要自己實作
+        throw new Error(
+          `🍍: Store "${$id}" is built using the setup syntax and does not implement $reset().`
+        )
+      }
+    : noop
 ```
