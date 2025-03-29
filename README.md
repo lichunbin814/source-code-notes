@@ -245,3 +245,94 @@ function useStore(pinia?: Pinia | null, hot?: StoreGeneric): StoreGeneric {
   // ...
 }
 ```
+
+---
+
+### 為什麼不能對 store/reactive 進行解構
+```ts
+<script setup>
+import { useCounterStore } from '@/stores/counter'
+import { computed } from 'vue'
+
+const store = useCounterStore()
+// ❌ 这将不起作用，因为它破坏了响应性
+// 这就和直接解构 `props` 一样
+const { name, doubleCount } = store
+name // 将始终是 "Eduardo" //
+
+//  ✅ 需要使用 storeToRefs()。它将为每一个响应式属性创建引用
+//  💡 `name` 和 `doubleCount` 是响应式的 ref
+//  💡 同时通过插件添加的属性也会被提取为 ref
+const { name, doubleCount } = storeToRefs(store)
+//  ✅  作为 action 的 increment 可以直接解构
+const { increment } = store
+
+</script>
+```
+
+
+#### 原因
+
+store 實際上是 reactive 物件，當對它進行解構時，會破壞響應性。這是因為 JavaScript 的解構賦值是基於值的複製，而不是引用。
+
+直接解構的問題:
+```ts
+const store = reactive({
+  count: 0
+})
+
+// ❌ 解構賦值 - 只會得到當下的值 0
+const { count } = store
+console.log(count) // 0
+
+store.count++ 
+console.log(count) // 仍然是 0，因為 count 只是一個普通的變量，不再與 store.count 有關聯
+```
+
+使用 toRef 改寫:
+```ts
+// ✅ 使用 toRef - 創建了一個響應式引用
+const count = toRef(store, 'count')
+console.log(count.value) // 0
+
+store.count++
+console.log(count.value) // 1，因為 count 是一個 ref，與原始數據保持連接
+```
+
+最後再看看 storeToRefs 的實現來理解這一點：
+- 只會處理兩種類型的屬性
+ - 有 effect 屬性的 computed/getters
+ - 是 ref 或 reactive 的響應式數據
+- Actions是普通的函數，不符合上述兩種情況，所以在 storeToRefs回傳值是拿不到 actions的。
+```ts
+export function storeToRefs<SS extends StoreGeneric>(store: SS) {
+  // 1. 先使用 toRaw 獲取原始 store 對象
+  const rawStore = toRaw(store)
+  // 建立一個新的空對象來存儲 refs
+  const refs = {}
+
+  // 2. loop原始 store 的所有屬性
+  for (const key in rawStore) {
+    const value = rawStore[key]
+    
+    // 3. 如果屬性有 effect（表示是 computed/getter），創建新的 computed ref
+    if (value.effect) {
+      refs[key] = computed({
+        get: () => store[key],
+        set(value) {
+          store[key] = value
+        }
+      })
+    } 
+    // 4. 如果屬性是 ref 或 reactive 對象，使用 toRef 創建引用
+    else if (isRef(value) || isReactive(value)) {
+      refs[key] = toRef(store, key)
+    }
+
+    // 5. 其他類型的屬性（如 actions/methods）則被忽略
+  }
+
+  // 回傳所有引用的對象
+  return refs
+}
+```
