@@ -150,28 +150,64 @@ function createSetupStore<Id extends string>(
   return store
 }
 ```
-### Store可以像組件一樣使用inject()來獲取全域提供的屬性?
+### Store中可以使用inject()來獲取全域依賴？
 
-範例(Store如何使用Inject)
+要在 Store 中安全地使用 inject()，需要注意以下關鍵步驟：
+
+1. 首先在應用入口提供依賴
+```ts
+// main.ts
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import { router } from './router'
+import { i18n } from './i18n'
+import App from './App.vue'
+
+const app = createApp(App)
+
+// 先提供全域依賴
+app.provide('router', router)
+app.provide('i18n', i18n)
+
+// 再初始化 pinia
+const pinia = createPinia()
+app.use(pinia)
+
+app.mount('#app')
+```
+
+2. 然後在 Store 中使用 inject
 ```ts
 import { inject } from 'vue'
 import { defineStore } from 'pinia'
+import type { Router } from 'vue-router'
+import type { I18n } from 'vue-i18n'
 
-export const useStore = defineStore('main', () => {
-  const router = inject('router') // 可以注入路由器
-  const i18n = inject('i18n')     // 可以注入國際化實例
+export const useMainStore = defineStore('main', () => {
+  const router = inject<Router>('router')
+  const i18n = inject<I18n>('i18n')
   
-  // 在store中使用這些注入的依賴
-  function navigate() {
-    router.push('/some-route')
+  // 確保依賴已被正確注入
+  if (!router || !i18n) {
+    throw new Error('Router or i18n instance not provided')
+  }
+  
+  // 在 store 中使用這些注入的依賴
+  function navigate(path: string) {
+    router.push(path)
+  }
+  
+  function translate(key: string) {
+    return i18n.t(key)
   }
   
   return {
-    navigate
+    navigate,
+    translate
   }
 })
 ```
-
+### 怎麼做到的?
 #### Pinia實例的創建與注入
 當應用調用app.use(pinia)時：
  - Pinia通過app.provide()將自己注入到應用的全局上下文
