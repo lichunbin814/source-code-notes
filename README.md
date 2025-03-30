@@ -886,8 +886,8 @@ export function addSubscription<T extends _Method>(
 觸發時機：
  - watch: 響應式數據變化時立即觸發，具體時機由 flush 選項控制
  - subscribe:
-  -- 受 isListening/isSyncListening 控制
-  -- 在 $patch 中會先禁用監聽，等所有修改完成後再一次性觸發
+  - 受 isListening/isSyncListening 控制
+  - 在 $patch 中會先禁用監聽，等所有修改完成後再一次性觸發
 
 ```ts
 // store.ts - $patch 中的控制
@@ -938,8 +938,8 @@ export function triggerSubscriptions<T extends _Method>(
 批次處理的差異：
   - watch: 每個響應式屬性的變化都會獨立觸發，透過 flush 選項控制觸發時機 ('pre'/'post'/'sync')
   - subscribe: 在triggerSubscriptions觸發的 watch callback的加上增加了控制層
-   -- isListening：控制異步訂閱（flush: 'post'/'pre'）
-   -- isSyncListening：控制同步訂閱（flush: 'sync'）
+   - isListening：控制異步訂閱（flush: 'post'/'pre'）
+   - isSyncListening：控制同步訂閱（flush: 'sync'）
 
 ```ts
 // store.ts
@@ -1007,5 +1007,66 @@ it('works with multiple different flush', async () => {
 
 ---
 
+### subscribe的detached底層實現邏輯是怎麼做的?
+
+
+#### 實現邏輯
+ 
+
+```ts
+/**
+ * subscribe的detached底層實現邏輯
+ * 
+ * 特殊情況(detached = true)的使用場景:
+ * 1. 全局事件監聽 - 需要在整個應用程式生命週期中持續監聽狀態變化
+ * 2. 跨組件共享 - 當多個組件需要共用同一個訂閱時
+ * 3. 長時間執行的背景任務 - 需要持續監聽狀態變化來執行特定任務
+ * 4. 非組件邏輯 - 在 Vue 組件之外的代碼中使用訂閱
+ * 
+ * 訂閱生命週期說明:
+ * 1. detached = false: 
+ *    - 訂閱會被綁定到當前組件的作用域
+ *    - 組件銷毀時自動清理訂閱
+ * 2. detached = true:
+ *    - 訂閱不會綁定到組件作用域
+ *    - 需要手動調用返回的 removeSubscription 函數來清理
+ */
+
+/**
+ * 參數傳遞流程:
+ * 1. 使用者調用: store.$subscribe(callback, { detached: true })
+ * 2. $subscribe 方法接收並傳遞 options.detached
+ * 3. addSubscription 根據 detached 決定是否綁定到作用域
+ */
+
+import { getCurrentScope, onScopeDispose } from 'vue'
+
+export function addSubscription<T extends _Method>(
+  subscriptions: T[],         
+  callback: T,                
+  detached?: boolean,         
+  onCleanup: () => void = noop 
+) {
+  subscriptions.push(callback)
+
+  // 創建清理函數
+  const removeSubscription = () => {
+    const idx = subscriptions.indexOf(callback)
+    if (idx > -1) {
+      subscriptions.splice(idx, 1)
+      onCleanup()
+    }
+  }
+
+  // 核心邏輯:
+  // 當 detached = false 且在組件作用域內時,
+  // 將 removeSubscription 註冊到作用域,組件銷毀時會自動執行清理
+  if (!detached && getCurrentScope()) {
+    onScopeDispose(removeSubscription)
+  }
+
+  return removeSubscription
+}
+```
 
 
