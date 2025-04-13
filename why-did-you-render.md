@@ -3,88 +3,51 @@
 # 如何監控Render的時機點
 
 ```ts
-function patchClassComponents(React, options = {}) {
-  const origRender = React.Component.prototype.render
-  
-  React.Component.prototype.render = function () {
-    // Track component before render
-    trackRenderInfo(this)
-    
-    // Call original render
-    const result = origRender.apply(this, arguments)
-    
-    // Compare with previous render and notify about unnecessary renders
-    notifyIfUnnecessaryRender(this)
-    
-    return result
-  }
-}
-```
+function patchFunctionComponent(React, options) {
+  const origCreateElement = React.createElement;
 
-# 判斷不必要渲染的核心邏輯
-```ts
-function isRenderUnnecessary(prevProps, nextProps, prevState, nextState) {
-  // Deep equal comparison to check if props changed substantively
-  const arePropsEqual = deepEqual(prevProps, nextProps)
-  const isStateEqual = deepEqual(prevState, nextState)
-  
-  // If both props and state are deeply equal but component still rendered
-  return arePropsEqual && isStateEqual
-}
-```
+/*
+// What JSX compiles to behind the scenes
+// <Button color="blue" size="large">Click Me</Button>
+// becomes:
+React.createElement(
+  Button,  // The component type (function or class)
+  { color: "blue", size: "large" },  // Props object
+  "Click Me"  // Children
+);
 
-# deepEqual在做什麼
-```ts
-function deepEqual(a, b, circularReferences = new WeakMap()) {
-  // Handle primitive types
-  if (a === b) return true
-  
-  // Different types or null values
-  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') {
-    return false
+How createElement relates to component rendering
+When React processes a functional component:
+
+The component function is passed as the first argument (type) to createElement
+React eventually calls this function with the props to get its render output
+For hook components, all hook calls execute during this function call
+The return value forms part of the virtual DOM tree
+--
+By intercepting createElement, WDYR can:
+
+See all components about to render
+Compare current props with previous props (deep equality check)
+Determine if a render was triggered despite equivalent prop values
+Report unnecessary renders that could be optimized with React.memo or useMemo
+*/
+React.createElement = function(type, props, ...children) {
+  // For functional components, type is the actual component function
+  if (typeof type === 'function') {
+    // Now WDYR can wrap this function to monitor:
+    // 1. When it's about to render
+    // 2. What props it receives
+    // 3. Compare with previous render's props
   }
-  
-  // Handle circular references
-  if (circularReferences.get(a) === b) return true
-  circularReferences.set(a, b)
-  
-  // Compare object keys and values recursively
   // ...
 }
+
 ```
 
-# 怎麼比較function是否相同
-```ts
-function areFunctionsEqual(prevFunc, nextFunc, options) {
-  // Functions are never equal by reference in JS unless they're the same instance
-  if (prevFunc === nextFunc) return true
-  
-  // Check if functions have the same string representation (limited approach)
-  if (options.compareFunctionsBy === 'name') {
-    return prevFunc.name === nextFunc.name
-  }
-  
-  if (options.compareFunctionsBy === 'toString') {
-    return prevFunc.toString() === nextFunc.toString()
-  }
-  
-  return false
-}
-```
-# 重新渲染的原因是什麼?
+# How does intercept and wrap React components without breaking their original functionality?
 
-```ts
-function getUpdateInfo(prevProps, nextProps, prevState, nextState) {
-  // Find which props changed
-  const changedProps = getChangedProps(prevProps, nextProps)
-  
-  // Find which state keys changed
-  const changedState = getChangedProps(prevState, nextState)
-  
-  // Determine if render was caused by props or state
-  const reason = Object.keys(changedProps).length ? 'props' : 
-                (Object.keys(changedState).length ? 'state' : 'unknown')
-  
-  return {changedProps, changedState, reason}
-}
-```
+# What techniques does createWDYRFunctionalComponentWrapper use to track and preserve component render history across multiple renders
+
+# How does createWDYRFunctionalComponentWrapper implement deep equality comparisons that go beyond React's reference equality checks?
+
+# What criteria does createWDYRFunctionalComponentWrapper use to identify unnecessary renders, and how does it format this information for developers?
