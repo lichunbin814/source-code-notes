@@ -16,14 +16,20 @@ const useStore = create((set) => ({
 export const create = (createState) =>
   createState ? createImpl(createState) : createImpl
 
-ffunction createImpl(createState) {
+function createImpl(createState) {
   // 建立一個 store API，包含 getState、setState、subscribe 等方法
   const api = createStore(createState)
 
   // 建立一個 React hook（useBoundStore），用來在組件中訂閱 store 狀態
+  // 例: 這裡 state => state.count，其實就是api.getState().count
   const useBoundStore = (selector) => useStore(api, selector)
 
   // 把 store API（如 getState、setState、subscribe）合併到 hook 上
+  /*
+ 可以這樣用：
+useBoundStore.getState() // 取得 state
+useBoundStore.setState({ count: 2 }) // 設定 state
+   */
   Object.assign(useBoundStore, api)
 
   // 回傳這個 hook，這個 hook 物件同時有 getState、setState、subscribe 等 API，可以在 component 外直接操作 store
