@@ -21,6 +21,17 @@ export function createStore(createState) {
 // `partial` 可以是物件或函式，`replace` 決定是否完全取代 state。
 // 如果 `partial` 是函式，則呼叫它並傳入目前的 state，否則直接使用 `partial` 作為下一個 state。
 
+/*
+example
+// partial 是 function
+store.setState(state => ({ count: state.count + 1 }))
+// 這裡 partial 是 (state) => ({ count: state.count + 1 })
+
+// partial 不是 function（是物件）
+store.setState({ count: 100 })
+// 這裡 partial 是 { count: 100 }
+
+*/
   const nextState =
       typeof partial === 'function'
         ? partial(state)
@@ -31,6 +42,20 @@ export function createStore(createState) {
      // 儲存更新前的 state，方便後續通知 listener。
       const previousState = state
  // 如果 `replace` 為 true 或 `nextState` 不是物件（或為 null），就直接取代 state；否則用淺拷貝合併舊 state 和新 state。
+/*
+example
+
+假設原本 state 是：
+{ a: 1, b: 2, c: 3 }
+
+// replace 為 false（預設），會合併 state
+store.setState({ a: 100 }, false)
+// 結果：{ a: 100, b: 2, c: 3 }
+
+// replace 為 true，會完全取代 state
+store.setState({ a: 100 }, true)
+// 結果：{ a: 100 }
+*/
       state =
         (replace ?? (typeof nextState !== 'object' || nextState === null))
           ? nextState
