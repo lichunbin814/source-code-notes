@@ -6,6 +6,8 @@
 export function createStore(createState) {
   let state
   const listeners = new Set()
+  
+  //....省略
 
   // 1.setState
   const setState = (partial, replace) => {
@@ -14,6 +16,7 @@ export function createStore(createState) {
     // 通知所有監聽者
     listeners.forEach((listener) => listener())
   }
+
   // 2.getState
   const getState = () => state
 
