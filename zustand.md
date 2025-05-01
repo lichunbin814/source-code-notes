@@ -1,5 +1,54 @@
 # zustand
 
+## create裡會做什麼事情
+
+```ts
+import { create } from 'zustand'
+
+const useStore = create((set) => ({
+  bears: 0,
+  increasePopulation: () => set((state) => ({ bears: state.bears + 1 })),
+   ...
+}))
+
+// 實際上會執行
+// create 的原始碼（src/react.ts）
+export const create = (createState) =>
+  createState ? createImpl(createState) : createImpl
+
+ffunction createImpl(createState) {
+  // 建立一個 store API，包含 getState、setState、subscribe 等方法
+  const api = createStore(createState)
+
+  // 建立一個 React hook（useBoundStore），用來在組件中訂閱 store 狀態
+  const useBoundStore = (selector) => useStore(api, selector)
+
+  // 把 store API（如 getState、setState、subscribe）合併到 hook 上
+  Object.assign(useBoundStore, api)
+
+  // 回傳這個 hook，這個 hook 物件同時有 getState、setState、subscribe 等 API，可以在 component 外直接操作 store
+  return useBoundStore
+}
+
+
+create 幫你包裝好 store，讓你在 React 裡用 hook 方式取得和操作 state。
+內部其實就是呼叫 createStore 產生 store，再用 React hook 包起來。
+
+create((set) => {...})
+   │
+   └─> createImpl(createState)
+           │
+           └─> createStore(createState)
+                   │
+                   └─> 建立 state、setState、getState、subscribe
+           │
+           └─> 建立 React hook（useStore）
+           │
+           └─> 合併 API
+   │
+   └─> 回傳 useStore（可在 React component 內使用）
+
+```
 ## createStore在做什麼
 
 ``` ts
