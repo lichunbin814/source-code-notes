@@ -176,5 +176,59 @@ function Component() {
 
 ```
 
+## useSyncExternalStoreWithSelector是做什麼的
+用一個最簡單的自訂 store，搭配 useSyncExternalStore，從初始化、監聽到通知，完整解釋一次：
+
+1. 初始化 store
+   ```ts
+let state = 0
+const listeners = new Set<() => void>()
+
+function getSnapshot() {
+  return state
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener)
+  // 回傳一個取消訂閱的函式
+  return () => listeners.delete(listener)
+}
+
+function setState(newState: number) {
+  state = newState
+  // 通知所有 listener
+  listeners.forEach(listener => listener())
+}
+```
+3. 在 React 組件中使用
+```ts
+import { useSyncExternalStore } from 'react'
+
+function Counter() {
+  const value = useSyncExternalStore(subscribe, getSnapshot)
+  return (
+    <div>
+      <span>{value}</span>
+      <button onClick={() => setState(value + 1)}>+1</button>
+    </div>
+  )
+}
+```
+4. Timeline 詳細說明
+(A) 組件初次渲染
+React 執行 getSnapshot()，取得 state（例如 0）。
+React 執行 subscribe(listener)，把一個內部 listener 加到 listeners Set 裡。
+(B) 你點擊按鈕，呼叫 setState
+setState(value + 1) 改變 state（例如變成 1）。
+執行 listeners.forEach(listener => listener())，通知所有 listener。
+React 的 listener 被呼叫，React 重新 render 組件。
+React 再次執行 getSnapshot()，取得最新 state（1），畫面更新。
+(C) 組件卸載
+React 會呼叫 subscribe 回傳的取消訂閱函式，把 listener 從 listeners Set 移除。
+5. 重點整理
+初始化：你自己寫一個 state 和 listeners 集合。
+監聽：subscribe 讓 React 把自己的 callback 加進 listeners。
+通知：setState 改變 state 後，呼叫所有 listeners，讓 React 知道要重新 render。
+這就是 useSyncExternalStore 的完整運作流程，跟你用什麼狀態管理工具無關，只要提供 subscribe 和 getSnapshot 就行！
 
 ## 為什麼useSyncExternalStoreWithSelector能自動隨 store 變化而更新
