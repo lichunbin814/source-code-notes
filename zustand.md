@@ -243,3 +243,99 @@ React 會呼叫 subscribe 回傳的取消訂閱函式，把 listener 從 listene
 
 
 ## 為什麼useSyncExternalStoreWithSelector能自動隨 store 變化而更新
+
+## useSyncExternalStore的實現邏輯
+
+```ts
+1. 初始渲染階段
+當組件首次渲染時，useSyncExternalStore 執行以下步驟：
+
+## 獲取初始快照：
+const value = getSnapshot();
+
+在每次渲染時，getSnapshot 會被調用以獲取當前的狀態快照（例如 Redux store 的狀態）。這是同步執行的，確保組件在渲染時使用最新的快照。
+
+## 初始化 useState：
+const [{inst}, forceUpdate] = useState({inst: {value, getSnapshot}});
+
+這裡使用 useState 來儲存一個物件 {inst: {value, getSnapshot}}，並獲取 forceUpdate 函數用於強制重新渲染。inst 是一個可變物件，用來追蹤快照和 getSnapshot 函數。
+
+## 檢查快照一致性：
+if (__DEV__) {
+  if (!didWarnUncachedGetSnapshot) {
+    if (value !== getSnapshot()) {
+      console.error('The result of getSnapshot should be cached to avoid an infinite loop');
+      didWarnUncachedGetSnapshot = true;
+    }
+  }
+}
+在開發模式下，React 會檢查 getSnapshot 的結果是否穩定。如果連續調用 getSnapshot 返回不同的值，會警告可能導致無限迴圈。這強調 getSnapshot 應返回穩定的值（例如 Redux 的 store.getState()）。
+
+
+
+2. useLayoutEffect 階段
+在渲染完成後，React 會執行 useLayoutEffect，用於更新 inst 物件並檢查快照是否變化：
+useLayoutEffect(() => {
+  inst.value = value;
+  inst.getSnapshot = getSnapshot;
+
+  if (checkIfSnapshotChanged(inst)) {
+    forceUpdate({inst});
+  }
+}, [subscribe, value, getSnapshot]);
+## 更新 inst：
+inst.value = value：將當前快照值儲存到 inst.value。
+inst.getSnapshot = getSnapshot：更新 getSnapshot 函數引用。
+
+## 檢查快照變化：
+checkIfSnapshotChanged(inst) 會比較 inst.value（上一次的快照）與當前 getSnapshot() 的結果：
+function checkIfSnapshotChanged(inst) {
+  const latestGetSnapshot = inst.getSnapshot;
+  const prevValue = inst.value;
+  try {
+    const nextValue = latestGetSnapshot();
+    return !is(prevValue, nextValue);
+  } catch (error) {
+    return true;
+  }
+}
+如果快照變化（prevValue !== nextValue），則調用 forceUpdate({inst})，這會觸發組件重新渲染。
+## 觸發時機：
+useLayoutEffect 在 DOM 更新後但瀏覽器繪製前執行。如果在這階段檢測到快照變化，會立即觸發重新渲染，確保組件使用最新的快照。
+
+3.useEffect 階段（訂閱 store）
+在 useLayoutEffect 之後，React 執行 useEffect，這裡是 subscribe 註冊回調的地方：
+
+useEffect(() => {
+  if (checkIfSnapshotChanged(inst)) {
+    forceUpdate({inst});
+  }
+  const handleStoreChange = () => {
+    if (checkIfSnapshotChanged(inst)) {
+      forceUpdate({inst});
+    }
+  };
+  return subscribe(handleStoreChange);
+}, [subscribe]);
+
+## 檢查快照變化：
+### 在訂閱之前，React 再次調用 checkIfSnapshotChanged(inst)，檢查是否有狀態變化（例如在 useLayoutEffect 和 useEffect 之間是否有其他更新）。如果有變化，則觸發 forceUpdate。
+
+## 訂閱 store：
+subscribe(handleStoreChange) 調用您提供的 subscribe 函數（例如 Redux 的 store.subscribe），並將 handleStoreChange 註冊為回調。
+subscribe 返回一個清除函數（unsubscribe），用於在組件卸載或 subscribe` 依賴改變時清除訂閱。
+
+## 當 store 變化時：
+當外部 store（如 Redux store）發生變化時，handleStoreChange 會被調用。它會檢查快照是否變化（checkIfSnapshotChanged(inst)），如果變化，則調用 forceUpdate({inst})，觸發組件重新渲染。
+
+## 觸發時機：
+useEffect 在 DOM 更新和瀏覽器繪製後執行。訂閱是在這個階段建立的，意味著 handleStoreChange 只有在 store 變化時才會被觸發（例如 Redux dispatch 了一個 action）。
+
+. 重新渲染
+當 forceUpdate({inst}) 被調用時：
+
+4. React 重新渲染組件。
+在渲染期間，const value = getSnapshot() 會再次執行，獲取最新的快照。
+組件使用這個快照渲染 UI，確保顯示的數據與 store 一致。
+useLayoutEffect 和 useEffect 再次執行，更新 inst 和檢查快照變化，循環繼續。
+```
