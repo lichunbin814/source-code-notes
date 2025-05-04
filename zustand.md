@@ -339,3 +339,51 @@ useEffect 在 DOM 更新和瀏覽器繪製後執行。訂閱是在這個階段�
 組件使用這個快照渲染 UI，確保顯示的數據與 store 一致。
 useLayoutEffect 和 useEffect 再次執行，更新 inst 和檢查快照變化，循環繼續。
 ```
+
+
+精簡版本
+``` javascript
+useLayoutEffect(() => {
+  /*
+  在 useLayoutEffect 階段，更新快照值並檢查是否有變化。
+    - 若快照不同，則觸發 forceUpdate 重新渲染，確保組件使用最新的快照。
+  */
+  inst.value = value;
+  inst.getSnapshot = getSnapshot;
+  if (checkIfSnapshotChanged(inst)) {
+    forceUpdate({inst});
+  }
+}, [subscribe, value, getSnapshot]);
+
+function checkIfSnapshotChanged(inst) {
+  const latestGetSnapshot = inst.getSnapshot;
+  const prevValue = inst.value;
+  try {
+    const nextValue = latestGetSnapshot();
+    return !is(prevValue, nextValue);
+  } catch (error) {
+    return true;
+  }
+}
+
+useEffect(() => {
+  /*
+  在 useEffect 階段：
+  - 在瀏覽器繪製結束後，再檢查一次快照資料是否為最新的。
+  - 並透過 subscribe 的 callback 以監聽後續快照變更。
+  - 若有快照變更，則觸發 forceUpdate 重新渲染，確保組件使用最新的快照。
+  */
+
+  if (checkIfSnapshotChanged(inst)) {
+    forceUpdate({inst});
+  }
+
+  const handleStoreChange = () => {
+    if (checkIfSnapshotChanged(inst)) {
+      forceUpdate({inst});
+    }
+  };
+  return subscribe(handleStoreChange);
+}, [subscribe]);
+```
+
