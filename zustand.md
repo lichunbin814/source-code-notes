@@ -348,8 +348,8 @@ const [{inst}, forceUpdate] = useState({inst: {value, getSnapshot}});
 
 useLayoutEffect(() => {
   /*
-  在 useLayoutEffect 階段，更新快照值並檢查是否有變化。
-    - 若快照不同，則觸發 forceUpdate 重新渲染，確保組件使用最新的快照。
+  In the useLayoutEffect phase, update the snapshot value and check for changes.
+    - If the snapshot is different, trigger forceUpdate to re-render, ensuring the component uses the latest snapshot.
   */
   inst.value = value;
   inst.getSnapshot = getSnapshot;
@@ -371,10 +371,10 @@ function checkIfSnapshotChanged(inst) {
 
 useEffect(() => {
   /*
-  在 useEffect 階段：
-  - 在瀏覽器繪製結束後，再檢查一次快照資料是否為最新的。
-  - 並透過 subscribe 的 callback 以監聽後續快照變更。
-  - 若有快照變更，則觸發 forceUpdate 重新渲染，確保組件使用最新的快照。
+  In the useEffect phase:
+  - After the browser painting is complete, check again if the snapshot data is the latest.
+  - Use the subscribe callback to listen for subsequent snapshot changes.
+  - If there is a snapshot change, trigger forceUpdate to re-render, ensuring the component uses the latest snapshot.
   */
 
   if (checkIfSnapshotChanged(inst)) {
