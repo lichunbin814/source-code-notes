@@ -343,6 +343,9 @@ useLayoutEffect 和 useEffect 再次執行，更新 inst 和檢查快照變化�
 
 精簡版本
 ``` javascript
+const value = getSnapshot();
+const [{inst}, forceUpdate] = useState({inst: {value, getSnapshot}});
+
 useLayoutEffect(() => {
   /*
   在 useLayoutEffect 階段，更新快照值並檢查是否有變化。
