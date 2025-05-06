@@ -585,11 +585,40 @@ const pause = () => {
 }
 ```
 
+## mutaion扮演了什麼角色，沒有他會發生什麼事?
+``` ts
+資料變更管理
+Mutation 負責處理所有的資料變更操作(Create, Update, Delete)
+提供完整的狀態管理，包括 pending, success, error 等狀態
+追蹤重要的元數據，如 failureCount, isPaused, submittedAt 等
+
+錯誤處理與重試機制
+
+內建重試機制
+提供錯誤追蹤和恢復機制
+可配置的重試次數和延遲
+
+retry: this.options.retry ?? 0,
+retryDelay: this.options.retryDelay
+
+生命週期管理
+await this.options.onMutate?.(variables)
+await this.options.onSuccess?.(data, variables, this.state.context!)
+await this.options.onError?.(error as TError, variables, this.state.context)
+await this.options.onSettled?.(data, null, variables, this.state.context)
+```
+如果沒有 Mutation 會發生什麼?
+``` ts
+缺乏狀態管理
+開發者需要手動追蹤請求狀態
+沒有統一的載入、成功、錯誤狀態管理
+需要自己實現樂觀更新邏輯
+
+```
+
 針對QueryClient的原始碼做解析，並回答
 
 
-
-mutaion在react query扮演了什麼角色，如果沒有他會發生什麼事?
 
 為什麼要觸發查詢緩存的焦點事件，可能會重新驗證過期的查詢
 
@@ -604,3 +633,19 @@ unsubscribeFocus、unsubscribeOnline怎麼實現的
 分析retryer.js是怎麼實現的
 
 分析 mutationCache 是怎麼實現的
+
+深入解析mutaion的這些機制是怎麼做的?
+變更操作(Create, Update, Delete)
+
+狀態管理包括 pending, success, error 等狀態
+追蹤重要的元數據，如 failureCount, isPaused, submittedAt 等
+生命週期管理
+樂觀更新邏輯
+去重和防抖機制
+競態條件(race condition)
+並發控制機制
+追蹤請求狀態
+標準化的錯誤處理
+導致不必要的重新渲染
+自動的資源清理機制
+缺乏統一的資料變更模式
