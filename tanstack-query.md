@@ -318,15 +318,101 @@ class QueryClient {
 }
 ```
 
+## 使用者在切換頁面時，QueryClient會做什麼事?
+
+
+```ts
+當使用者切換頁面回來時，QueryClient 會執行以下操作：
+mount(): void {
+  this.#mountCount++
+  if (this.#mountCount !== 1) return
+
+  this.#unsubscribeFocus = focusManager.subscribe(async (focused) => {
+    if (focused) {
+      // 1. 恢復被暫停的 mutations
+      await this.resumePausedMutations()
+      // 2. 觸發 queryCache 的 onFocus 事件
+      this.#queryCache.onFocus()
+    }
+  })
+}
+
+恢復暫停的 Mutations：
+resumePausedMutations(): Promise<unknown> {
+  if (onlineManager.isOnline()) {
+    return this.#mutationCache.resumePausedMutations()
+  }
+  return Promise.resolve()
+}
+
+resumePausedMutations(): Promise<unknown> {
+  // 1. 找出所有被暫停的 mutations
+  const pausedMutations = this.getAll().filter((x) => x.state.isPaused)
+
+  // 2. 使用 notifyManager.batch 批次處理
+  return notifyManager.batch(() =>
+    Promise.all(
+      // 3. 對每個暫停的 mutation 調用 continue()
+      pausedMutations.map((mutation) => 
+        mutation.continue().catch(noop)
+      ),
+    )
+  )
+}
+```
+
+## FoucsManager在做什麼?
+focusManager 通過以下機制監聽瀏覽器 visibility 狀態(tab是否active):
+``` ts
+constructor() {
+  this.#setup = (onFocus) => {
+    if (!isServer && window.addEventListener) {
+      // 註冊 visibilitychange 事件監聽
+      window.addEventListener('visibilitychange', listener, false)
+      
+      return () => {
+        // 清理事件監聽
+        window.removeEventListener('visibilitychange', listener)
+      }
+    }
+    return
+  }
+
+isFocused(): boolean {
+  if (typeof this.#focused === 'boolean') {
+    return this.#focused
+  }
+  // 使用 document.visibilityState 判斷頁面是否可見
+  return globalThis.document?.visibilityState !== 'hidden'
+}
+
+onFocus(): void {
+  const isFocused = this.isFocused()
+  // 通知所有訂閱者頁面焦點狀態變更
+  this.listeners.forEach((listener) => {
+    listener(isFocused)
+  })
+}
+```
+
+## 在什麼時候focusManager會把state改為paused?
+```ts
+網路離線時（通過 networkMode 配置）
+相同 scope 的其他 mutation 正在執行時
+retryer 判斷無法開始執行時
+```
+
+
 針對QueryClient的原始碼做解析，並回答
 
-focusManager在做什麼
 
 解釋resumePausedMutations
 
 為什麼要觸發查詢緩存的焦點事件，可能會重新驗證過期的查詢
 
 onlineManager、#queryCache.onOnline、resumePausedMutations怎麼實現的
+
+onFocus的實現邏輯是什麼
 
 mountCount大於1是什麼情境
 
