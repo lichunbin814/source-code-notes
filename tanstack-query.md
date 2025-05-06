@@ -397,13 +397,148 @@ onFocus(): void {
 
 ## 在什麼時候focusManager會把state改為paused?
 ```ts
-網路離線時（通過 networkMode 配置）
+
+
 相同 scope 的其他 mutation 正在執行時
+// mutationCache.ts
+canRun(mutation: Mutation<any, any, any, any>): boolean {
+  const scope = scopeFor(mutation)
+  if (typeof scope === 'string') {
+    const mutationsWithSameScope = this.#scopes.get(scope)
+    const firstPendingMutation = mutationsWithSameScope?.find(
+      (m) => m.state.status === 'pending'  // 尋找相同 scope 中是否有正在執行的 mutation
+    )
+    // 只有當沒有其他 pending mutation 或自己是第一個 pending mutation 時才能執行
+    return !firstPendingMutation || firstPendingMutation === mutation
+  }
+  return true
+}
+
+
 retryer 判斷無法開始執行時
+// 1. canStart 用於初始檢查是否可以開始執行
+const canStart = () => canFetch(config.networkMode) && config.canRun()
+
+// 2. canContinue 用於檢查是否可以繼續執行
+const canContinue = () =>
+  focusManager.isFocused() &&
+  (config.networkMode === 'always' || onlineManager.isOnline()) &&
+  config.canRun()
+
+// 3. 關鍵的暫停邏輯在 run 方法中
+Promise.resolve(promiseOrValue)
+  .catch((error) => {
+    // ...retry 邏輯...
+    
+    sleep(delay)
+      .then(() => {
+        // 這裡是關鍵：檢查是否可以繼續，如果不行就調用 pause()
+        return canContinue() ? undefined : pause()
+      })
+      .then(() => {
+        if (isRetryCancelled) {
+          reject(error)
+        } else {
+          run()
+        }
+      })
+  })
+
+// 4. pause 方法實際觸發狀態變更
+const pause = () => {
+  return new Promise((continueResolve) => {
+    continueFn = (value) => {
+      if (isResolved || canContinue()) {
+        continueResolve(value)
+      }
+    }
+    // 這裡觸發 onPause callback，最終導致 mutation 狀態變為 paused
+    config.onPause?.()
+  }).then(() => {
+    continueFn = undefined
+    if (!isResolved) {
+      config.onContinue?.()
+    }
+  })
+}
+
+function canFetch(networkMode: NetworkMode | undefined): boolean {
+//網路離線時（通過 networkMode 配置）
+  return (networkMode ?? 'online') === 'online'
+    ? onlineManager.isOnline()  // 檢查是否在線上
+    : true
+}
+
+```
+
+## scope和mutation分別在做什麼些什麼?
+
+```ts
+Mutation 是指資料的修改操作，例如：
+Scope 則是用來管理相關的 mutations 執行順序
+
+// 使用者更新資料的 mutation
+// useMutation類似於queue
+const updateUserMutation = useMutation({
+  mutationFn: updateUser,
+  // 設定 scope，確保同一個使用者的更新操作不會同時執行
+  scope: { id: 'user', userId: '123' }
+})
+
+// 實際使用案例
+const handleSubmit = () => {
+  // 同時觸發多次更新
+  // 當第一個 mutation 在執行時，其他相同 scope 的 mutations 會進入暫停狀態
+等第一個完成後，第二個才會開始執行，以此類推
+mutation.mutate({ title: 'New Title' })     // 第一個執行
+mutation.mutate({ content: 'New Content' }) // 進入 queue
+mutation.mutate({ tags: ['new', 'tag'] })  // 進入 queue
+}
+
+這樣的設計有幾個好處：
+避免同時對同一資源進行多次修改造成資料不一致
+確保更新操作的順序性
+防止不必要的競爭條件
+
+類似 queue 的行為，實現邏輯：
+
+// mutationCache.ts
+canRun(mutation: Mutation<any, any, any, any>): boolean {
+  const scope = scopeFor(mutation)
+  if (typeof scope === 'string') {
+    const mutationsWithSameScope = this.#scopes.get(scope)
+    const firstPendingMutation = mutationsWithSameScope?.find(
+      (m) => m.state.status === 'pending'
+    )
+    // 只有 queue 中第一個可以執行
+ // 兩種情況可以執行：
+    // 1. 沒有其他 pending mutation (!firstPendingMutation)
+    // 2. 這個 mutation 就是第一個 pending mutation (firstPendingMutation === mutation)
+    return !firstPendingMutation || firstPendingMutation === mutation
+  }
+  return true
+}
+
+// 當一個 mutation 完成時，會嘗試執行 queue 中的下一個
+runNext(mutation: Mutation<any, any, any, any>): Promise<unknown> {
+  const scope = scopeFor(mutation)
+  if (typeof scope === 'string') {
+    // 尋找 queue 中下一個被暫停的 mutation
+    const foundMutation = this.#scopes
+      .get(scope)
+      ?.find((m) => m !== mutation && m.state.isPaused)
+
+    // 繼續執行找到的下一個 mutation
+    return foundMutation?.continue() ?? Promise.resolve()
+  }
+  return Promise.resolve()
+}
+
 ```
 
 
 針對QueryClient的原始碼做解析，並回答
+
 
 
 解釋resumePausedMutations
@@ -417,3 +552,7 @@ onFocus的實現邏輯是什麼
 mountCount大於1是什麼情境
 
 unsubscribeFocus、unsubscribeOnline怎麼實現的
+
+分析retryer.js是怎麼實現的
+
+分析 mutationCache 是怎麼實現的
