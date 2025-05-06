@@ -536,12 +536,60 @@ runNext(mutation: Mutation<any, any, any, any>): Promise<unknown> {
 
 ```
 
+## retryer 裡的pause 方法裡的config.onPause 怎麼對應到mutation的
+
+Mutation 創建時會有唯一的 mutationId
+每個 Mutation 實例有自己的 retryer 實例
+Retryer 建立時，會得到該 mutation 提供的 config（包含 onPause callback）
+當需要暫停時，retryer 呼叫 config.onPause，就會觸發對應 mutation 的 dispatch({ type: 'pause' })
+
+``` ts
+retryer 中的 config.onPause 是透過 mutation 的 execute 方法設置的。讓我們看看整個流程：
+
+// mutation.ts
+async execute(variables: TVariables): Promise<TData> {
+  // 1. 建立 retryer，並傳入 config
+  this.#retryer = createRetryer({
+    fn: () => {
+      if (!this.options.mutationFn) {
+        return Promise.reject(new Error('No mutationFn found'))
+      }
+      return this.options.mutationFn(variables)
+    },
+    onPause: () => {
+      // 2. 設定 onPause callback
+        // 這裡的 this 指向建立 retryer 的那個 mutation 實例
+
+      this.#dispatch({ type: 'pause' })
+    },
+    // ... 其他配置
+  })
+
+  // 3. 檢查是否需要暫停
+  const isPaused = !this.#retryer.canStart()
+}
+
+當 retryer 呼叫 pause() 時：
+
+// retryer.ts
+const pause = () => {
+  return new Promise((continueResolve) => {
+    continueFn = (value) => {
+      if (isResolved || canContinue()) {
+        continueResolve(value)
+      }
+    }
+    // 4. 呼叫在 mutation execute 時設定的 onPause callback
+    config.onPause?.()
+  })
+}
+```
 
 針對QueryClient的原始碼做解析，並回答
 
 
 
-解釋resumePausedMutations
+mutaion在react query扮演了什麼角色，如果沒有他會發生什麼事?
 
 為什麼要觸發查詢緩存的焦點事件，可能會重新驗證過期的查詢
 
