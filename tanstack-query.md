@@ -669,16 +669,103 @@ setTimeout(() => {
   window.dispatchEvent(new Event('visibilitychange'))
 }, 6000)
 
+```
 
+ 訂閱狀態變化
+```ts
+// 基礎訂閱類別 - 實現訂閱者模式的核心邏輯
+class Subscribable {
+  constructor() {
+    // 使用 Set 存儲監聽器，確保唯一性
+    this.listeners = new Set()
+    // 綁定 this 上下文，確保回調中的 this 指向正確
+    this.subscribe = this.subscribe.bind(this)
+  }
 
+  // 提供訂閱機制，返回取消訂閱的函數
+  subscribe(listener) {
+    this.listeners.add(listener)
+    // 返回取消訂閱函數，移除對應的監聽器
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
 
+  // 檢查是否有活躍的監聽器
+  hasListeners() {
+    return this.listeners.size > 0
+  }
+}
 
+// 查詢類 - 繼承訂閱功能，實現數據查詢和狀態管理
+class SimpleQueryWithSubscribe extends Subscribable {
+  constructor() {
+    super()
+    // 初始化查詢狀態
+    this.state = {
+      data: null,      // 查詢結果
+      error: null,     // 錯誤信息
+      isLoading: false // 加載狀態
+    }
+  }
+
+  // 更新狀態並通知所有監聽器
+  setState(newState) {
+    // 更新狀態
+    this.state = { ...this.state, ...newState }
+    // 通知所有監聽器狀態變化
+    this.listeners.forEach(listener => {
+      listener(this.state)
+    })
+  }
+
+  // 執行查詢的主要方法
+  async fetch(queryFn) {
+    // 設置加載狀態
+    this.setState({ isLoading: true })
+    
+    try {
+      // 執行查詢函數
+      const data = await queryFn()
+      // 更新成功狀態
+      this.setState({
+        data,
+        error: null,
+        isLoading: false
+      })
+      return this.state
+      
+    } catch (error) {
+      // 更新錯誤狀態
+      this.setState({
+        data: null,
+        error,
+        isLoading: false
+      })
+      throw error
+    }
+  }
+}
+
+// 使用示例
+const query = new SimpleQueryWithSubscribe()
+
+// 訂閱狀態變化 - 每次狀態更新都會調用此回調
+const unsubscribe = query.subscribe((state) => {
+  console.log('Query state changed:', state)
+})
+
+// 執行查詢 - 觸發狀態變化並通知訂閱者
+query.fetch(async () => {
+  const response = await fetch('/api/data')
+  return response.json()
+})
 
 
 ```
 
-這樣的簡化寫法是符合原始碼的邏輯嗎?
+這樣的簡化寫法是符合原始碼的最核心邏輯嗎? 我只需要檢查最終的邏輯判斷，有一些邏輯簡化複雜性是可以接受的
 
 基於原始碼的寫法，在最最最基礎的例子加入簡化過的 "重試機制" 邏輯 ，不需要列出不相關的邏輯進來，讓我更好理解
 
-還有哪些功能可以再逐步加入的? 先從相關性最高的列出
+以開發者的角度來說明，還有哪些功能可以再逐步加入說明的? 先從相關性最高的列出
