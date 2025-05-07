@@ -930,24 +930,179 @@ onOnline(): void {
     })
   })
 }
+```
+
+## 什麼時候onlineManager的setEventListener會被觸發
+
+QueryClient.mount()
+  → onlineManager.subscribe()
+    → onlineManager.onSubscribe()
+      → onlineManager.setEventListener(this.#setup)
+        → 設置瀏覽器 online/offline 事件監聽
+
+## onlineManager的狀態變更後，會做什麼?
+
+```ts
+constructor() {
+  super()
+  this.#setup = (onOnline) => {
+    if (!isServer && window.addEventListener) {
+      const onlineListener = () => onOnline(true)   // 這裡的 onOnline 就是 setOnline
+      const offlineListener = () => onOnline(false)
+      
+      window.addEventListener('online', onlineListener, false)
+      window.addEventListener('offline', offlineListener, false)
+      // ...
+    }
+  }
+}
+
+setOnline(online: boolean): void {
+  const changed = this.#online !== online
+  if (changed) {
+    this.#online = online
+    this.listeners.forEach((listener) => {
+      listener(online)
+    })
+  }
+}
+```
+## 為什麼QueryClient 要檢查 mountCount > 1
+
+這種設計的目的是：
+
+防止重複訂閱：當同一個 QueryClient 在不同地方被 mount 時，只在第一次設置事件監聽
+引用計數：使用 mountCount 追蹤 QueryClient 的使用狀態
+資源管理：只有當所有 mount 都被 unmount 後（mountCount = 0），才真正清理資源
+實際應用場景：
+
+在 React 應用中，同一個 QueryClient 可能被多個組件共用
+這些組件可能在不同時間 mount/unmount
+mountCount 確保只有當最後一個使用者停止使用時，才清理資源
 
 
+針對QueryClient的原始碼做解析，並用原始碼搭配註解回答
+
+## mount/unmount是由誰觸發的?
+
+由框架內部自動處理的，主要通過 QueryClientProvider 組件來實現。從代碼中可以看到：
+
+``` ts
+// packages/react-query/src/QueryClientProvider.tsx
+React.useEffect(() => {
+  client.mount()
+  return () => {
+    client.unmount()  // 在 cleanup function 中自動 unmount
+  }
+})
+
+// packages/solid-query/src/QueryClientProvider.tsx
+props.client.mount()
+return props.client.unmount.bind(props.client)
+
+當開發者使用 TanStack Query 時：
+
+首先需要建立 QueryClient：
+const queryClient = new QueryClient()
+
+然後用 QueryClientProvider 包裹應用：
+<QueryClientProvider client={queryClient}>
+  <App />
+</QueryClientProvider>
+
+Provider 會自動處理：
+在組件掛載時調用 client.mount()
+在組件卸載時調用 client.unmount()
+開發者不需要手動調用這些方法
+
+多次 mount 的情況通常發生在：
+
+同一個 QueryClient 被多個 Provider 使用
+使用了動態導入的組件
+在測試環境中重複創建 Provider
+但這些都由框架內部處理，開發者不需要關心 mount/unmount 的具體邏輯。
+```
+
+## 如果開發者建立多個queryClient會發生什麼事?
+
+```ts
+緩存分散問題：
+
+不推薦使用多個 QueryClient 實例主要有以下原因：
+相同的查詢會在不同的 client 中重複存儲
+無法共享查詢結果，導致重複的網路請求
+<QueryClientProvider client={new QueryClient()}>
+  <SomeComponent>
+    {/* 這裡的查詢結果被存在第一個 QueryClient */}
+    <Query key="users" />
+  </SomeComponent>
+  <QueryClientProvider client={new QueryClient()}>
+    <OtherComponent>
+      {/* 即使是相同的查詢，也會重新請求並存在第二個 QueryClient */}
+      <Query key="users" />
+    </OtherComponent>
+  </QueryClientProvider>
+</QueryClientProvider>
+
+// Component A (使用第一個 QueryClient)
+const { data: users } = useQuery('users', fetchUsers)
+// 更新了用戶數據
+
+// Component B (使用第二個 QueryClient)
+const { data: users } = useQuery('users', fetchUsers)
+// 仍然是舊的數據，因為緩存不共享
+
+不同 QueryClient 之間的狀態無法同步
+可能導致 UI 顯示不一致
+資源效率問題：
+每個 QueryClient 都維護自己的：
+查詢緩存 (QueryCache)
+變異緩存 (MutationCache)
+事件監聽器
+增加內存開銷
+重複的網路請求增加頻寬使用
+背景更新問題：
+// 第一個 QueryClient 的查詢
+useQuery('data', fetcher, {
+  staleTime: 1000,
+  refetchOnMount: true
+})
+
+// 第二個 QueryClient 的查詢
+// 會觸發新的請求，因為它有自己的 staleTime 計算
+useQuery('data', fetcher, {
+  staleTime: 1000,
+  refetchOnMount: true
+})
+
+每個 client 獨立管理重新獲取邏輯
+可能導致過多的背景更新
+建議做法是：
+
+// ✅ 創建一個全局的 QueryClient 實例
+const queryClient = new QueryClient()
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <SomeComponent />
+      <OtherComponent />
+    </QueryClientProvider>
+  )
+}
+
+typescript
 
 
+這樣可以：
 
+共享查詢緩存
+確保數據一致性
+優化資源使用
+統一管理背景更新策略
 
 ```
 
-針對QueryClient的原始碼做解析，並用原始碼搭配註解回答
-誰會觸發onlineManager的setEventListener、setOnline function?
-
-onlineManager、#queryCache.onOnline、resumePausedMutations怎麼實現的
-
-onFocus的實現邏輯是什麼
-
-mountCount大於1是什麼情境
-
-unsubscribeFocus、unsubscribeOnline怎麼實現的
 
 分析retryer.js是怎麼實現的
 
