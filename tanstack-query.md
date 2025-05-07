@@ -784,8 +784,162 @@ typescript
 
 ```
 
-針對QueryClient的原始碼做解析，並回答
+## OnlineManager的關鍵原始碼內容是什麼?
 
+```ts
+// 繼承自 Subscribable 類，用於管理監聽器
+export class OnlineManager extends Subscribable<Listener> {
+  #online = true // 私有變量，追蹤在線狀態
+  #cleanup?: () => void // 清理函數
+  #setup: SetupFn // 設置函數
+}
+
+事件監聽設置:
+constructor() {
+  super()
+  this.#setup = (onOnline) => {
+    if (!isServer && window.addEventListener) {
+      // 設置 online/offline 事件監聽
+/*
+當有監聽器時自動設置事件監聽
+當沒有監聽器時自動清理資源
+使用 #cleanup 函數進行資源清理
+*/
+      const onlineListener = () => onOnline(true)
+      const offlineListener = () => onOnline(false)
+      
+      window.addEventListener('online', onlineListener, false)
+      window.addEventListener('offline', offlineListener, false)
+
+      // 返回清理函數
+      return () => {
+        window.removeEventListener('online', onlineListener)
+        window.removeEventListener('offline', offlineListener)
+      }
+    }
+    return
+  }
+}
+
+訂閱管理:
+// 當第一個監聽器被添加時觸發
+protected onSubscribe(): void {
+  if (!this.#cleanup) {
+    this.setEventListener(this.#setup)
+  }
+}
+
+核心功能方法:
+// 設置新的事件監聽器
+setEventListener(setup: SetupFn): void {
+  this.#setup = setup
+  this.#cleanup?.()
+  this.#cleanup = setup(this.setOnline.bind(this))
+}
+
+// 更新在線狀態
+setOnline(online: boolean): void {
+  const changed = this.#online !== online
+  if (changed) {
+    this.#online = online
+    this.listeners.forEach((listener) => {
+      listener(online)
+    })
+  }
+}
+
+// 獲取當前在線狀態
+isOnline(): boolean {
+  return this.#online
+}
+```
+
+## onlineManager 的 onSubscribe什麼時候會被觸發?
+
+``` ts
+會在 QueryClient 的 mount() 方法中被觸發
+mount(): void {
+  this.#mountCount++
+  if (this.#mountCount !== 1) return
+
+  this.#unsubscribeOnline = onlineManager.subscribe(async (online) => {
+    if (online) {
+     // 當網路恢復在線時會：
+     // 恢復暫停的 mutations (resumePausedMutations)
+      await this.resumePausedMutations()
+//通知 queryCache 網路恢復 (this.#queryCache.onOnline())
+      this.#queryCache.onOnline()
+    }
+  })
+}
+
+onOnline(): void {
+  notifyManager.batch(() => {
+    this.getAll().forEach((query) => {
+      query.onOnline()  // 通知每個 query
+    })
+  })
+}
+
+每個 Query 實例收到通知後會：
+onOnline(): void {
+  const observer = this.observers.find((x) => x.shouldFetchOnReconnect())
+  observer?.refetch({ cancelRefetch: false })  // 重新獲取數據
+  this.#retryer?.continue()  // 繼續之前暫停的請求
+}
+
+這樣的設計形成了一個完整的網路狀態響應鏈：
+onlineManager → QueryClient → QueryCache → Query instances，確保當網路恢復時，所有需要更新的查詢都能得到適當的處理。
+
+```
+
+## QueryCacheTanStack Query 中扮演著什麼角色?
+
+``` ts
+中央數據存儲
+export class QueryCache extends Subscribable<QueryCacheListener> {
+  #queries: QueryStore  // Map<string, Query> 存儲所有查詢
+}
+
+管理所有查詢的中央存儲
+通過 queryHash 追蹤和存儲所有 Query 實例
+查詢生命週期管理
+
+build<TQueryFnData, TError, TData, TQueryKey extends QueryKey>(
+  client: QueryClient,
+  options: QueryOptions,
+  state?: QueryState<TData, TError>,
+): Query<TQueryFnData, TError, TData, TQueryKey> {
+  // 檢查是否已存在相同的查詢
+  let query = this.get(queryHash)
+  // 確保相同的查詢不會重複創建
+  if (!query) {
+    query = new Query({...})
+    this.add(query)
+  }
+  return query
+}
+
+統一管理和分發網路狀態變化
+批量處理查詢更新
+
+onOnline(): void {
+  notifyManager.batch(() => {
+    this.getAll().forEach((query) => {
+      query.onOnline()
+    })
+  })
+}
+
+
+
+
+
+
+```
+
+針對QueryClient的原始碼做解析，並用原始碼搭配註解回答
+誰會觸發onlineManager的setEventListener、setOnline function?
 
 onlineManager、#queryCache.onOnline、resumePausedMutations怎麼實現的
 
@@ -814,3 +968,20 @@ unsubscribeFocus、unsubscribeOnline怎麼實現的
 導致不必要的重新渲染
 自動的資源清理機制
 缺乏統一的資料變更模式
+
+
+如果沒有 QueryCache：
+
+數據重複：
+相同的查詢可能會重複創建多個實例
+造成不必要的網絡請求和內存消耗
+狀態不一致：
+無法在不同組件間共享查詢狀態
+可能導致 UI 顯示不一致的數據
+事件處理混亂：
+網路狀態變化需要單獨通知每個查詢
+無法進行批量優化處理
+性能問題：
+失去查詢復用機制
+每次都需要重新發起請求
+QueryCache 本質上是一個中央協調器，確保查詢的一致性、效率和可靠性。
