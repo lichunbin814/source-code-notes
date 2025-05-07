@@ -764,7 +764,73 @@ query.fetch(async () => {
 
 ```
 
-這樣的簡化寫法是符合原始碼的最核心邏輯嗎? 我只需要檢查最終的邏輯判斷，有一些邏輯簡化複雜性是可以接受的
+定時更新資料
+```ts
+class SimpleQueryWithRefetch {
+  constructor() {
+    this.state = {
+      data: null,
+      error: null,
+      isLoading: false
+    }
+    this.intervalId = null
+  }
+
+  startRefetch(options) {
+    if (this.intervalId) {
+      clearInterval(this.intervalId)
+    }
+
+    if (!options.refetchInterval) {
+      return
+    }
+
+    this.intervalId = setInterval(() => {
+ 
+     
+      
+      if (
+     // 必要邏輯 : 由refetchIntervalInBackground控制，是否定時更新資料
+    options.refetchIntervalInBackground
+     // 非必要邏輯: 原始碼中，此處的判斷實際包含了 tab 的顯示狀態：
+    // focusManager.isFocused() 會檢查 document?.visibilityState !== 'hidden'
+    || document?.visibilityState !== 'hidden'
+) {
+        this.fetch()
+      }
+    }, options.refetchInterval)
+  }
+
+  async fetch(queryFn, options = {}) {
+    try {
+      const data = await queryFn()
+      this.state = { data, error: null, isLoading: false }
+      return this.state
+    } catch (error) {
+      this.state = { data: null, error, isLoading: false }
+      throw error
+    }
+  }
+}
+
+// 步驟一：創建查詢實例
+const query = new SimpleQueryWithRefetch()
+
+// 步驟二：執行查詢並設置每1秒自動更新資料
+query.fetch(
+  () => fetch('/api/data').then(r => r.json()),
+  {
+    refetchInterval: 1000,
+    refetchIntervalInBackground: true
+  }
+)
+
+
+
+
+```
+
+這樣的簡化寫法是符合原始碼的最核心邏輯嗎? 我只需要檢查最終的邏輯判斷思考方向是否一致，有一些邏輯簡化複雜性是可以接受的
 
 基於原始碼的寫法，在最最最基礎的例子加入簡化過的 "重試機制" 邏輯 ，不需要列出不相關的邏輯進來，讓我更好理解
 
