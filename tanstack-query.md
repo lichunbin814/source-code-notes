@@ -616,11 +616,176 @@ await this.options.onSettled?.(data, null, variables, this.state.context)
 
 ```
 
+## 如何確保從別的tab切換回來，頁面依然保持最新資料
+
+``` ts
+透過focusManager
+this.#unsubscribeFocus = focusManager.subscribe(async (focused) => {
+  if (focused) {
+    await this.resumePausedMutations()
+    this.#queryCache.onFocus()
+  }
+})
+
+onFocus(): void {
+  const isFocused = this.isFocused()
+  // 通知所有訂閱者頁面焦點狀態變更
+  this.listeners.forEach((listener) => {
+    listener(isFocused)
+  })
+}
+```
+
+## 當建立多個 QueryClient 時，focusManager 的 listener會是多個嗎?
+
+但官方強烈建議使用單一 QueryClient!! 以下只是探討邊界情況
+
+``` ts
+每個 QueryClient 實例都有自己獨立的 mountCount：
+
+export class QueryClient {
+  #mountCount: number
+
+  constructor(config: QueryClientConfig = {}) {
+    this.#mountCount = 0
+  }
+}
+
+當一個 QueryClient 實例呼叫 mount() 時：
+mount(): void {
+  this.#mountCount++
+  // 這個 mountCount 檢查只確保「同一個」QueryClient 實例不會重複註冊 listener。
+  if (this.#mountCount !== 1) return
+
+  this.#unsubscribeFocus = focusManager.subscribe(async (focused) => {
+    if (focused) {
+      await this.resumePausedMutations()
+      this.#queryCache.onFocus()
+    }
+  })
+}
+
+每個 QueryClient 實例都會在自己首次 mount 時註冊一個新的 listener 到 focusManager 的 listeners Set 中：
+// 在 subscribable.ts
+protected listeners = new Set<TListener>()
+
+
+因此，如果同時存在多個 QueryClient 實例，focusManager 就會有多個 listener。每個 QueryClient 實例會貢獻一個 listener，而且這些 listener 都是獨立的函數，所以會被分別存儲在 Set 中。
+```
+
+## QueryClient的角色是什麼? 為什麼要有他?
+
+``` ts
+用兩個 API 的例子來說明 QueryClient 的角色：
+
+// 定義兩個 API
+const fetchTest1 = async () => {
+  const response = await fetch('/api/test1')
+  return response.json()
+}
+
+const fetchTest2 = async () => {
+  const response = await fetch('/api/test2')
+  return response.json()
+}
+
+// 建立一個 QueryClient 來管理所有 API
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30000,  // 所有 API 共用的預設設定
+    }
+  }
+})
+
+// 在不同元件中使用這些 API
+function Component1() {
+  // 使用 test1 API
+  const { data: test1Data } = useQuery(['test1'], fetchTest1)
+  return <div>{test1Data}</div>
+}
+
+function Component2() {
+  // 使用 test2 API
+  const { data: test2Data } = useQuery(['test2'], fetchTest2)
+  return <div>{test2Data}</div>
+}
+
+
+QueryClient 對這些 API 的管理角色：
+
+統一的快取管理：
+// 可以手動操作任何 API 的快取
+queryClient.setQueryData(['test1'], newData)
+queryClient.invalidateQueries(['test2'])
+
+// 也可以一次操作多個相關的 API
+queryClient.invalidateQueries(['test']) // 使所有以 test 開頭的查詢失效
+
+typescript
+
+⟼
+
+共用的狀態監控：
+// 監控所有 API 的狀態
+const isFetching = queryClient.isFetching() // 是否有任何 API 正在取得資料
+
+typescript
+
+⟼
+
+相依性管理：
+// test2 依賴 test1 的資料
+const { data: test2Data } = useQuery(
+  ['test2'],
+  fetchTest2,
+  {
+    enabled: !!queryClient.getQueryData(['test1']) // 只有當 test1 有資料時才執行
+  }
+)
+
+typescript
+
+⟼
+
+一致的錯誤處理：
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 3,        // 所有 API 失敗時都重試 3 次
+      retryDelay: 1000 // 重試間隔 1 秒
+    }
+  }
+})
+
+typescript
+
+⟼
+
+全域的資料更新：
+// 當用戶切換回視窗時，可以選擇更新某些 API
+queryClient.mount() // 這會透過 focusManager 監聽焦點
+// 當視窗重新獲得焦點時
+queryClient.invalidateQueries(['test1']) // 更新 test1
+queryClient.invalidateQueries(['test2']) // 更新 test2
+
+typescript
+
+⟼
+
+所以不管有多少個 API：
+
+它們共享同一個 QueryClient 實例
+統一的設定和管理介面
+一致的快取和重試策略
+集中的狀態管理
+統一的事件響應（如視窗焦點變化）
+這就是為什麼通常只需要一個 QueryClient - 它就像是所有 API 的管理中心。
+
+```
+
 針對QueryClient的原始碼做解析，並回答
 
-
-
-為什麼要觸發查詢緩存的焦點事件，可能會重新驗證過期的查詢
 
 onlineManager、#queryCache.onOnline、resumePausedMutations怎麼實現的
 
