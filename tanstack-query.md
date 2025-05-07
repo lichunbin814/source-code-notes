@@ -1103,8 +1103,264 @@ typescript
 
 ```
 
+##  retryer的實現邏輯
 
-分析retryer.js是怎麼實現的
+```ts
+外部使用者的使用方式：
+const { data } = useQuery({
+  queryKey: ['todos'],
+  queryFn: fetchTodoList,
+  retry: 3,                // 重試次數
+  retryDelay: 1000,       // 重試延遲
+  retryOnMount: true,     // 組件掛載時是否重試
+})
+
+useQuery
+  ↓
+QueryObserver.#executeFetch()  // 開始執行查詢
+  ↓
+Query.fetch()                  // 查詢邏輯
+  ↓
+createRetryer()               // 創建重試器
+  ↓
+Retryer.start()              // 開始執行/重試循環
+
+內部邏輯
+
+// 階段一：初始化
+createRetryer({...}) {
+  let isRetryCancelled = false
+  let failureCount = 0
+  let isResolved = false
+  
+  const thenable = pendingThenable<TData>()  // 創建 Promise
+}
+
+// 階段二：開始執行
+start() {
+  if (canStart()) {    // 檢查是否可以開始
+    run()
+  } else {
+    pause().then(run)  // 不能立即開始則暫停等待
+  }
+}
+
+// 階段三：執行過程
+run() {
+  // 1. 執行函數
+  promiseOrValue = config.fn()
+  
+  // 2. 處理結果
+  Promise.resolve(promiseOrValue)
+    .then((result) => {
+      resolve(result)   // 成功完成
+    })
+    .catch((error) => {
+      // 3. 錯誤處理與重試邏輯
+      if (shouldRetry) {
+        failureCount++
+        sleep(delay)    // 延遲
+          .then(() => canContinue() ? undefined : pause())
+          .then(() => run())  // 重試
+      } else {
+        reject(error)   // 放棄重試
+      }
+    })
+}
+
+關鍵機制：
+a) 暫停機制：
+
+pause() {
+  return new Promise(resolve => {
+    continueFn = value => {
+      if (canContinue()) resolve(value)
+    }
+  })
+}
+
+b) 重試策略：
+
+shouldRetry =
+  retry === true ||
+  (typeof retry === 'number' && failureCount < retry) ||
+  (typeof retry === 'function' && retry(failureCount, error))
+
+c) 延遲計算：
+
+const delay = Math.min(1000 * 2 ** failureCount, 30000)
+// 指數退避，最大 30 秒
+
+網站狀態自動暫停/繼續機制：
+// 網路狀態檢查
+if (!onlineManager.isOnline()) {
+  pause()  // 暫停執行
+}
+
+// 網路恢復
+onlineManager.setOnline(true)
+  ↓
+continue()  // 繼續執行
+
+```
+
+## retryOnMount是怎麼實作出來的
+初始狀態
+  ↓
+組件掛載
+  ↓
+檢查 shouldLoadOnMount
+  ↓
+需要加載？─────否───► 結束
+  ↓ 是
+執行查詢
+  ↓
+失敗？─────否───► 完成
+  ↓ 是
+檢查 retryOnMount
+  ↓
+允許重試？─────否───► 結束
+  ↓ 是
+重試查詢
+
+```ts
+初始檢查邏輯 (shouldLoadOnMount)：
+function shouldLoadOnMount(query, options): boolean {
+  return (
+/*
+典型使用場景：
+a) 條件查詢：
+
+useQuery({
+  queryKey: ['user', userId],
+  enabled: !!userId  // 只在有 userId 時執行查詢
+})
+
+typescript
+
+
+b) 依賴查詢：
+
+useQuery({
+  queryKey: ['user-posts', userId],
+  enabled: (query) => !!userId && query.state.isSuccess  // 只在用戶數據成功後查詢文章
+})
+
+typescript
+
+
+c) 動態控制：
+
+useQuery({
+  queryKey: ['data'],
+  enabled: (query) => {
+    // 複雜的邏輯判斷
+    if (query.state.error) return false
+    if (query.state.isFetching) return false
+    return someCondition
+  }
+})
+
+typescript
+
+
+在不同組件中的應用：
+// 控制查詢的啟用狀態
+const { data, isFetching } = useQuery({
+  queryKey: ['data'],
+  enabled: shouldFetch,  // 可以是布爾值
+  enabled: (query) => {  // 或函數
+    return shouldFetch && !query.state.isFetching
+  }
+})
+*/
+    resolveEnabled(options.enabled, query) !== false &&  // 查詢已啟用
+    query.state.data === undefined &&                    // 沒有數據
+    !(query.state.status === 'error' && options.retryOnMount === false)  // 非錯誤狀態或允許重試
+  )
+}
+
+掛載時獲取邏輯 (shouldFetchOnMount)：
+function shouldFetchOnMount(query, options): boolean {
+  return (
+    shouldLoadOnMount(query, options) ||     // 需要初始加載
+    (query.state.data !== undefined &&       // 或已有數據
+      shouldFetchOn(query, options, options.refetchOnMount))  // 且需要重新獲取
+  )
+}
+
+protected onSubscribe(): void {
+  if (this.listeners.size === 1) {  // 首次訂閱
+/*
+QueryObserver 採用了訂閱者模式，並有資料共享機制
+
+數據共享邏輯：
+第一個訂閱者觸發查詢並獲取數據
+後續訂閱者直接使用已經獲取的數據
+所有訂閱者共享同一個 Query 實例和緩存
+
+*/
+// // 添加到 Query 的觀察者列表
+    this.#currentQuery.addObserver(this)
+
+    if (shouldFetchOnMount(this.#currentQuery, this.options)) {
+      this.#executeFetch()  // 執行查詢
+    }
+  }
+}
+```
+
+## QueryObserver是什麼角色，沒有他會發生什麼事?
+```ts
+核心職責：
+class QueryObserver extends Subscribable<QueryObserverListener> {
+  #client: QueryClient                    // 查詢客戶端
+  #currentQuery: Query                    // 當前查詢
+  #currentResult: QueryObserverResult     // 當前結果
+  #currentRefetchInterval?: number        // 重新獲取間隔
+  observers: Array<QueryObserver>         // 觀察者列表
+}
+
+橋接作用：
+// 連接 Query 實例和 React 組件
+useQuery() → QueryObserver → Query
+     ↑           ↓             ↓
+  React組件   管理生命週期    數據請求
+
+如果沒有 QueryObserver，會失去以下重要功能：
+
+狀態追蹤：
+protected onQueryUpdate(): void {
+  // 更新並通知結果變化
+  this.updateResult()
+  // 通知所有監聽器
+  this.listeners.forEach((listener) => {
+    listener(this.#currentResult)
+  })
+}
+
+自動重新獲取：
+#updateRefetchInterval(): void {
+  // 設置定時重新獲取
+  this.#refetchIntervalId = setInterval(() => {
+    if (this.options.refetchIntervalInBackground || focusManager.isFocused()) {
+      this.#executeFetch()
+    }
+  }, this.#currentRefetchInterval)
+}
+```
+
+
+
+Query.fetch() 在做什麼
+
+Retryer.start() 在做什麼? 會造成重覆呼叫嗎(之前已有使用過query.fetch)
+
+isRetryCancelled的核心邏輯是什麼?
+
+onPause的核心邏輯是什麼
+
+
 
 分析 mutationCache 是怎麼實現的
 
