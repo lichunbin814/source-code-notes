@@ -824,6 +824,162 @@ query.fetch(
     refetchIntervalInBackground: true
   }
 )
+```
+
+cacheTime
+```ts
+class SimpleQueryWithCache {
+  constructor() {
+    this.state = {
+      data: null,
+      error: null,
+      isLoading: false
+    }
+    this.gcTimeout = null
+
+    /* staleTime vs cacheTime 的資料處理差異：
+     *
+     * staleTime: 控制數據"過期"但還可以用（設定 5 天）
+     * 過期前（0-5天）：直接用緩存數據
+     * 過期後（5-7天）：先回傳舊數據 + 同時在背景更新
+     * 
+     * 就像牛奶的"最佳賞味期限"：
+     * - 期限內（0-5天）：新鮮牛奶，直接喝
+     * - 期限後（5-7天）：還能喝，但最好去買新鮮的
+     * 
+     * cacheTime: 控制數據完全"清除"（設定 7 天）
+     * 過期前（0-7天）：數據保留在緩存中
+     * 過期後（7天後）：數據被刪除，必須重新請求
+     * 
+     * 就像牛奶的"保存期限"：
+     * - 期限內（0-7天）：放在冰箱還能喝
+     * - 期限後（7天後）：必須倒掉，要買新的
+     */
+
+    this.cacheTime = 7 * 24 * 60 * 60 * 1000  // 7天
+  }
+
+  scheduleGc() {
+    this.clearGc()
+    
+    // 設置緩存清理計時器
+    // 7天後，數據會被完全清除
+    this.gcTimeout = setTimeout(() => {
+      this.remove()
+    }, this.cacheTime)
+  }
+
+  clearGc() {
+    if (this.gcTimeout) {
+      clearTimeout(this.gcTimeout)
+      this.gcTimeout = null
+    }
+  }
+
+  remove() {
+    // 完全清除數據，就像倒掉過期牛奶
+    this.state = {
+      data: null,
+      error: null,
+      isLoading: false
+    }
+  }
+
+  async fetch(queryFn, options = {}) {
+    try {
+      const data = await queryFn()
+      this.state = {
+        data,
+        error: null,
+        isLoading: false
+      }
+
+      // 開始計算緩存的保存期限（7天）
+      this.scheduleGc()
+      
+      return this.state
+      
+    } catch (error) {
+      this.state = {
+        data: null,
+        error,
+        isLoading: false
+      }
+      throw error
+    }
+  }
+
+  destroy() {
+    this.clearGc()
+  }
+}
+
+// 使用示例
+const query = new SimpleQueryWithCache()
+
+// 使用 7 天的緩存時間
+query.fetch(
+  () => fetch('/api/data').then(r => r.json()),
+  {
+    cacheTime: 7 * 24 * 60 * 60 * 1000  // 7天後數據會被完全清除
+  }
+)
+```
+
+stale過期時，先回傳快取資料，同時背景更新為新資料
+```ts
+class SimpleQueryWithStale {
+  constructor() {
+    this.state = {
+      data: null,
+      fetchStatus: 'idle'  // 追蹤查詢狀態
+    }
+  }
+
+  async fetch(queryFn) {
+    // 檢查是否正在查詢中
+    if (this.state.fetchStatus !== 'idle') {
+      // 如果已有查詢在進行中，返回該查詢
+      return this.currentPromise
+    }
+
+    this.state.fetchStatus = 'fetching'
+    
+    // 創建新查詢
+    this.currentPromise = queryFn()
+      .then(data => {
+        this.state = {
+          data,
+          fetchStatus: 'idle'
+        }
+        return this.state
+      })
+
+    // 如果有舊數據，立即返回
+    if (this.state.data) {
+      return this.state
+    }
+
+    // 沒有舊數據，等待新查詢
+    return this.currentPromise
+  }
+}
+
+// 使用示例
+const query = new SimpleQueryWithStale()
+
+// 首次查詢：等待數據
+const result1 = await query.fetch(() => 
+  fetch('/api/todos').then(r => r.json())
+)
+console.log(result1)
+
+// 第二次查詢：立即返回舊數據，背景更新
+const result2 = await query.fetch(() => 
+  fetch('/api/todos').then(r => r.json())
+)
+console.log(result2)
+
 
 
 
