@@ -986,6 +986,130 @@ console.log(result2)
 
 ```
 
+## mutation
+
+精簡後的核心狀態機邏輯
+```ts
+// --- Mutation 類：核心狀態機的簡化實現  ---
+
+// 為了簡化說明，這裡不會有「遇到錯誤時的重試邏輯」、「通知外部觀察者資料已更新」、「快取機制」等複雜邏輯，
+// 只會專注於 mutation 的狀態變化和核心邏輯。
+
+// 情境：
+  // 假設你發送了一個訂單 API，這個訂單有三種狀態：
+  // 1. 等待中 (pending)
+  // 2. 成功 (success)
+  // 3. 失敗 (error)
+  // 當你發送訂單時，狀態會變成等待中 (pending)，
+  // 然後根據 API 的回應，狀態會變成成功 (success) 或失敗 (error)。
+
+
+
+class Mutation {
+
+  // _dispatch 是內部方法，用於觸發狀態更新。
+  _dispatch(action) {
+    // 定義function : 計算出新的狀態。
+    const reducer = (currentState, currentAction) => {
+      switch (currentAction.type) {
+        case 'pending':
+          // 當 mutation 執行時，狀態會改為 'pending'。
+          return {
+            ...currentState, 
+            status: 'pending',
+            data: undefined,
+            // ...省略其他狀態屬性
+          };
+        case 'success':
+          return {
+            ...currentState,
+            status: 'success',
+            data: currentAction.data, 
+            // ...省略其他狀態屬性
+          };
+        case 'error':
+          return {
+            ...currentState,
+            status: 'error',
+            error: currentAction.error, 
+            data: undefined,
+            // ...省略其他狀態屬性
+          };
+        default:
+          // 如果接收到未知的 action type，保持當前狀態不變。
+          return currentState;
+      }
+    };
+
+    // 呼叫 reducer 計算新狀態，並更新 this.state。
+    this.state = reducer(this.state, action);
+
+    // 在完整的 TanStack Query 中，狀態更新後，會在這裡通知所有觀察者 (MutationObserver)，
+    // 讓 UI 層或其他訂閱者能夠響應狀態變化。例如：
+    // this._observers.forEach(observer => observer.onMutationUpdate(action));
+    // 這裡暫時省略，以專注核心狀態機。
+  }
+
+  // execute 方法是啟動 mutation 執行的入口。
+  // 它接收執行 mutation 所需的變量 (variables)。
+  async execute(variables) {
+    // 步驟 1: 將狀態設置為 'pending'，預設為 'idle'，表示 mutation 尚未開始。
+    // 表示 mutation 操作已開始，正在等待異步函數 (mutationFn) 的結果。
+    this._dispatch({ type: 'pending', variables: variables });
+
+    try {
+      // 步驟 2: 執行用戶提供的核心異步函數 (mutationFn)
+      if (!this.options.mutationFn) {
+        // 必須提供 mutationFn，否則不知道要執行什麼操作。
+        throw new Error('No mutationFn provided in options');
+      }
+
+      // 直接呼叫 mutationFn。
+      // 在完整的 TanStack Query 中，這裡並非直接呼叫，而是通過一個名為 `Retryer` 的組件。
+      // `Retryer` 負責實際執行 `mutationFn`，並且能夠處理網絡錯誤時的自動重試、
+      // 判斷網絡狀態（在線/離線）來決定是否暫停或繼續執行。
+      // 這種委派使得 Mutation 類本身不必關心複雜的重試和網絡邏輯。
+      // 為簡化，此處直接 await，假設 mutationFn 只執行一次且不處理重試。
+      const data = await this.options.mutationFn(variables);
+
+      // 步驟 3: 處理 mutationFn 成功的情況
+      // 在完整的 TanStack Query 中，這裡會先呼叫用戶配置的 onSuccess 回呼函數，
+      // 允許用戶在 mutation 成功後執行一些副作用，例如：使相關的查詢快取失效、顯示成功提示等。
+      // if (this.options.onSuccess) {
+      //   await this.options.onSuccess(data, variables, this.state.context); 
+      // }
+
+      // 步驟 4: 將狀態設置為 'success'
+      this._dispatch({ type: 'success', data: data });
+
+      return data; // 返回成功數據
+    } catch (error) {
+
+      // 步驟 5: 處理 mutationFn 失敗的情況
+      // 在完整的 TanStack Query 中，這裡會先呼叫用戶配置的 onError 回呼函數，
+      // 允許用戶處理錯誤，例如：記錄錯誤、顯示錯誤提示、執行回滾操作等。
+      // if (this.options.onError) {
+      //   await this.options.onError(error, variables, this.state.context); 
+      // }
+
+      // 步驟 6: 將狀態設置為 'error'
+      this._dispatch({ type: 'error', error: error });
+
+      throw error; // 重新拋出錯誤，以便 execute 的呼叫者可以捕獲和處理
+    } finally {
+      // 在完整的 TanStack Query 中，`finally` 塊通常會執行一些清理工作，
+      // 或者通知 `MutationCache` 當前 mutation 已完成（無論成功或失敗），
+      // 以便 `MutationCache` 可以決定是否執行隊列中的下一個 mutation（如果配置了序列化執行）。
+      // 例如：this._mutationCache.runNext(this);
+      // 如果沒有這個機制，同時觸發的多個 mutation 可能會並發執行，
+      // 而 `runNext` 提供了控制併發或序列化執行的能力。
+      // 在此最簡核心版本中，我們假設 mutation 是獨立執行的，故省略此邏輯。
+    }
+  }
+}
+
+```
+
 
 這樣的簡化寫法是符合原始碼的最核心邏輯嗎? 我只需要檢查最終的邏輯判斷思考方向是否一致，有一些邏輯簡化複雜性是可以接受的
 
